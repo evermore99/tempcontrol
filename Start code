@@ -1,0 +1,219 @@
+#include <SPI.h>
+#include "Adafruit_MAX31855.h"
+#include "HX8357_t3n.h"
+#include <math.h>
+#include <stdio.h>
+#include <elapsedMillis.h>
+#include <ButtonEvents.h>
+#include <ADC.h>
+#include <Encoder.h>
+#include <PID_v1.h>
+
+
+// Default connection is using software SPI, but comment and uncomment one of
+// the two examples below to switch between software SPI and hardware SPI:
+
+// Example creating a thermocouple instance with software SPI on any three
+// digital IO pins.
+#define C_BLACK       0x0000
+#define C_BLUE        0x001F
+#define C_RED         0xF800
+#define C_GREEN       0x07E0
+#define C_CYAN        0x07FF
+#define C_MAGENTA     0xF81F
+#define C_YELLOW      0xFFE0
+#define C_WHITE       0xFFFF
+
+
+#define TFT_CS     10
+#define TFT_RST    -1
+#define TFT_DC      9
+#define MAXMISO    12
+#define MAXCLK     13 //max31855 nothing else.
+
+#define MAX31855_1 14
+#define MAX31855_2 15
+#define MAX31855_3 16
+#define MAX31855_4 17
+
+SPISettings settingsTFT(25000000, MSBFIRST, SPI_MODE3);
+SPISettings SettingsA(5000000, MSBFIRST, SPI_MODE0);
+
+// initialize the Thermocouple
+Adafruit_MAX31855 TH1(MAXCLK, MAX31855_1, MAXMISO);
+
+//constructors for TFT without flickering
+HX8357_t3n tft = HX8357_t3n(TFT_CS, TFT_DC, TFT_RST);
+
+//flickerfree variables:
+float j;
+unsigned long StartTime, EndTime;
+char str[30];
+unsigned long endmicros;  //speed check variables
+unsigned long currentmicros;
+
+//arrays for the temperature
+float  TC1[12];
+float  *pArray_From_TC;
+float  pArray_Screen;
+
+
+//Intervals execution of the various functions
+//TFT update:
+unsigned long ScreenpreviousMillis = 0;
+unsigned long ScreenInterval = 100;//used
+//Thermocouple Function update
+unsigned long TC_previousMillis = 0;
+unsigned long TC_Interval = 1000;//not used
+//total update repeat Thermocouple + TFT every Second
+unsigned long ValuespreviousMillis = 0;
+unsigned long ValuesInterval = 1000;//used
+
+elapsedMillis firstsecond;
+elapsedMillis TCmillis;
+elapsedMillis TFTmillis;
+elapsedMillis Delaymillis;
+
+
+float TFTscreen(float *pArray_Screen) //Menu 1 //Display
+{
+
+//  if (pArray_Screen == nullptr)
+//  {
+//    Serial.println("TFTSCREEN- NULL pointer Passed!");
+//   
+//
+//    return 0;
+//  }
+  // get some data
+  j += 0.0013;
+  currentmicros = micros();
+  long value;
+  double voltage;
+  Serial.println("inside the TFT function");
+
+
+  tft.setTextColor(C_WHITE, C_BLACK);
+  tft.setCursor(0, 20);
+  tft.setTextSize(2);
+  tft.println(" This is just a test");
+  tft.println(" this is just a test ");
+  tft.setTextSize(2);
+
+  tft.setTextColor(C_WHITE, C_BLACK);
+  tft.setCursor(20, 200);
+  tft.print("TempEmag: ");
+  Serial.println("pArray_Screen[8]");
+  Serial.println(pArray_Screen[8]);
+  tft.print(pArray_Screen[8]);
+
+  //  tft.print(j, 2);
+  tft.print("    "); // blank out some if new string not as long as previous..
+  sprintf(str, "TempEmag: %.2lf\n", pArray_Screen[8]);
+  tft.print(str);
+  return 0;
+}
+
+float *Thermocouples1()
+{
+  //use this to test the code and the pointers, you dont need to have MAX31855. good idea for debugging
+//  for (int i = 0; i < 12; i++) TC1[i] += 0.25;
+  if (TH1.readCelsius() < 0) //if temperature is lower than 0   ////Thermocouple 1
+  {
+
+
+
+    TC1[8] = TH1.readCelsius();
+    delay(10);
+    TC1[4] = TH1.readInternal();
+
+    if (isnan( TC1[8]))
+    {
+      Serial.print("Something wrong with Thermocouple ");
+    }
+    else {
+      Serial.print("C = ");
+      Serial.println(TC1[8]);
+    }
+  } else  //this is the 0...500°
+  {
+
+    TC1[4] = TH1.readInternal();
+
+    TC1[8] = TH1.readCelsius();
+    if (isnan( TC1[8]))
+    {
+      Serial.print("Something wrong with Thermocouple ");
+    }
+    else {
+      Serial.print("C = ");
+      Serial.println(TC1[8]);
+    }
+    Serial.print("Thermocouples1 Print cArray_TC[8] = ");
+    Serial.println(TC1[8]);
+
+
+
+  }
+  return TC1;
+}
+
+void setup()
+{
+  Serial.begin(9600);
+  //SPI CS pins for the MAX31855 need to be set high!
+   pinMode(MAX31855_1, OUTPUT); digitalWrite(MAX31855_1, HIGH);
+   pinMode(TFT_CS,     OUTPUT); digitalWrite(TFT_CS, HIGH);
+
+  SPI.begin();
+
+  tft.begin();
+  tft.setRotation(1);
+  tft.fillScreen(C_BLACK);
+  tft.fillRect(0, 30, 480, 10, C_RED);
+  tft.fillRect(0, 140, 480, 10, C_BLUE);
+  uint8_t x = tft.readcommand8(HX8357_RDMODE);
+  Serial.print("Display Power Mode: 0x"); Serial.println(x, HEX);
+  x = tft.readcommand8(HX8357_RDMADCTL);
+  Serial.print("MADCTL Mode: 0x"); Serial.println(x, HEX);
+  x = tft.readcommand8(HX8357_RDPIXFMT);
+  Serial.print("Pixel Format: 0x"); Serial.println(x, HEX);
+  x = tft.readcommand8(HX8357_RDIMGFMT);
+  Serial.print("Image Format: 0x"); Serial.println(x, HEX);
+  x = tft.readcommand8(HX8357_RDSELFDIAG);
+  Serial.print("Self Diagnostic: 0x"); Serial.println(x, HEX);
+
+
+
+    if (!TH1.begin())
+  {
+    while(1);
+    Serial.println("Error");
+  }
+
+
+
+}
+
+void loop()
+{
+  
+  if (TCmillis>=50)
+
+    {
+      Thermocouples1();
+
+      TCmillis=TCmillis-50;
+
+    }
+    else if (TFTmillis>=255)
+    {
+
+      TFTscreen(Thermocouples1());
+      TFTmillis=TFTmillis-255;
+
+    }
+  
+  
+ 
+}
